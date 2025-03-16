@@ -1,0 +1,4 @@
+name: foodtime-rs
+input-topic: "raw-data"
+output-topics: ["training-data"]
+language: rust

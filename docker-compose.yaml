@@ -1,4 +1,3 @@
-version: "3.7"
 networks:
   redpanda_network:
     driver: bridge
@@ -33,7 +32,7 @@ services:
       - --mode dev-container
       # enable logs for debugging.
       - --default-log-level=debug
-    image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
     container_name: redpanda-0
     volumes:
       - redpanda-0:/var/lib/redpanda/data
@@ -60,7 +59,7 @@ services:
       - --mode dev-container
       - --default-log-level=debug
       - --seeds redpanda-0:33145
-    image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
     container_name: redpanda-1
     volumes:
       - redpanda-1:/var/lib/redpanda/data
@@ -89,7 +88,7 @@ services:
       - --mode dev-container
       - --default-log-level=debug
       - --seeds redpanda-0:33145
-    image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
     container_name: redpanda-2
     volumes:
       - redpanda-2:/var/lib/redpanda/data
@@ -104,7 +103,7 @@ services:
       - redpanda-0
   console:
     container_name: redpanda-console
-    image: docker.redpanda.com/redpandadata/console:v2.3.8
+    image: docker.redpanda.com/redpandadata/console:v2.8.4
     networks:
       - redpanda_network
     entrypoint: /bin/sh
@@ -125,10 +124,3 @@ services:
       - 8080:8080
     depends_on:
       - redpanda-0
-  tensorflow_python3_jupyter:
-    image: docker.io/weimeilin/wasm-workshop-tensorflow:latest 
-    ports:
-     - "8888:8888"
-    container_name: tensorflow-python3-jupyter
-    networks:
-      - redpanda_network

@@ -2,13 +2,6 @@
 
 ## Download and Start Workspace
 
-```bash
-# clone repo
-git clone https://github.com/weimeilin79/wasm-demo.git
-cd  wasm-demo
-# Start redpanda
-docker-compose up -d
-```
 
 ## Ingest Real-Time Data
 

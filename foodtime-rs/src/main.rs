@@ -23,6 +23,7 @@ struct TrainingRecord {
     age: u32,
     rating: f32,
     dist: f32,
+    delivery_time: f32,
 }
 
 const R: f32 = 6371.0;
@@ -54,13 +55,12 @@ fn transform(event: WriteEvent, writer: &mut RecordWriter) -> Result<(), Box<dyn
         age: rec.age,
         rating: rec.rating,
         dist,
+        delivery_time: rec.delivery_time,
     };
-    let mut out = csv::Writer::from_writer(vec![]);
-    out.serialize(training_rec)
-        .expect("unable to serialize TrainingRecord");
-    let res = out.into_inner()?;
+    let out = serde_json::to_string(&training_rec)?;
+    let res = out.into_bytes();
 
-    let new_rec = Record::new(Some(rec.id.into_bytes()), Some(res));
+    let new_rec = Record::new(Some(rec.delivery_time.to_string().into_bytes()), Some(res));
 
     writer
         .write(new_rec.borrow())

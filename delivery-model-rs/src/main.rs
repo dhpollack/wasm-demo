@@ -5,12 +5,10 @@ extern crate intel_mkl_src;
 #[cfg(feature = "accelerate")]
 extern crate accelerate_src;
 
-use std::borrow::BorrowMut;
 use std::fs::File;
 use std::io::{self, BufRead};
 
-use futures::stream::FuturesUnordered;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
@@ -27,6 +25,7 @@ use candle_nn::{linear, loss, Linear, Module, Optimizer, VarBuilder, VarMap};
 const INPUT_DIM: usize = 3;
 const OUTPUT_DIM: usize = 1;
 const LEARNING_RATE: f64 = 0.002;
+const BATCH_SIZE: usize = 100;
 
 #[derive(Serialize, Deserialize)]
 struct TrainingItem {
@@ -146,16 +145,13 @@ async fn training_item_stream(sender: mpsc::Sender<TrainingItem>) -> anyhow::Res
     Ok(())
 }
 
-async fn train_from_redpanda(
-    mut receiver: mpsc::Receiver<TrainingItem>,
-    dev: &Device,
-) -> anyhow::Result<()> {
+async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyhow::Result<()> {
     // Setup dummy receivers
     let (_tx, mut rx) = oneshot::channel::<()>();
     // Setup model
-    let batch_size = 1000;
+    let dev = Device::cuda_if_available(0)?;
     let varmap = VarMap::new();
-    let vs = VarBuilder::from_varmap(&varmap, DType::F32, dev);
+    let vs = VarBuilder::from_varmap(&varmap, DType::F32, &dev);
     let model = LinearModel::new(INPUT_DIM, OUTPUT_DIM, vs.clone())?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
@@ -172,7 +168,7 @@ async fn train_from_redpanda(
                 println!("STOP RECEIVING");
                 return Ok(());
             }
-            num_received = receiver.recv_many(&mut items, batch_size) => {
+            num_received = receiver.recv_many(&mut items, BATCH_SIZE) => {
                 epoch += 1;
                 println!("num received: {num_received}");
                 let (data_vec, labels_vec): (Vec<f32>, Vec<f32>) =
@@ -185,14 +181,14 @@ async fn train_from_redpanda(
                             tl.push(item.delivery_time);
                             (td, tl)
                         });
-                let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), dev)?;
-                let labels_tensor = Tensor::from_vec(labels_vec.clone(), labels_vec.len(), dev)?;
+                let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), &dev)?;
+                let labels_tensor = Tensor::from_vec(labels_vec.clone(), labels_vec.len(), &dev)?;
                 let m = Dataset {
                     train_data: data_tensor,
                     train_labels: labels_tensor,
                 };
-                let train_data = m.train_data.to_device(dev)?;
-                let train_labels = m.train_labels.to_device(dev)?;
+                let train_data = m.train_data.to_device(&dev)?;
+                let train_labels = m.train_labels.to_device(&dev)?;
                 let preds = model.forward(&train_data)?.squeeze(1)?;
                 let epoch_loss = loss::mse(&preds, &train_labels)?;
                 opt.backward_step(&epoch_loss)?;
@@ -214,8 +210,10 @@ async fn main() -> anyhow::Result<()> {
 
     if from_redpanda {
         // Setup channels
-        let (tx, mut rx) = channel::<TrainingItem>(32);
-        tokio::join!(training_item_stream(tx), train_from_redpanda(rx, &dev));
+        let (tx, rx) = channel::<TrainingItem>(BATCH_SIZE);
+        let t1 = tokio::spawn(training_item_stream(tx));
+        let t2 = tokio::spawn(train_from_redpanda(rx));
+        let (_, _) = (t1.await??, t2.await??);
     } else {
         match train_from_local(&dev) {
             Ok(_) => {}

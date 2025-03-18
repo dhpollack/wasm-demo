@@ -1,9 +1,9 @@
 
 # Red Panda + Rust - Real Time Data Transforms and Model Training
 
-This is an extension of the [Red Panda Data Transforms tutorial](https://docs.redpanda.com/redpanda-labs/?q=getting%20started%20with%20data%20transforms) in the Red Panda Labs.  It takes the toy example of doing a data transform in golang and model training in python and does everything in rust.  Class rust rewrite.
+This is an extension of the [Red Panda Data Transforms tutorial](https://docs.redpanda.com/redpanda-labs/?q=getting%20started%20with%20data%20transforms) in the Red Panda Labs.  It takes the toy example of doing a data transform in golang and model training in python and does everything in rust.  Classic rust rewrite.
 
-I recommend you do the actual tutorial since it's pretty good and gives you an idea of what this should do.
+I recommend you do the actual tutorial since it's pretty good and gives you an idea of what this should do. (note: I had to upgrade the redpanda images to get it to work with the version of rpk in the tutorial image)
 
 ## Requirements
 
@@ -19,6 +19,7 @@ I recommend you do the actual tutorial since it's pretty good and gives you an i
 You may need to use `docker-compose` instead of `docker compose` to run the docker commands.
 
 ### Clone Repo and Start Red Panda
+
 ```bash
 # clone repo
 git clone https://github.com/dhpollack/wasm-demo.git

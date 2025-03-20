@@ -4,11 +4,15 @@ services:
     build:
       dockerfile: ../dockerfiles/rdkafka-producer.dockerfile
       context: delivery-producer-rs
+      args:
+        CPUARCH: ${CPUARCH:-x86_64}
   train:
     network_mode: host
     build:
       dockerfile: ../dockerfiles/train.dockerfile
       context: delivery-model-rs
+      args:
+        CPUARCH: ${CPUARCH:-x86_64}
     volumes:
       - ./delivery-model-rs/model.safetensors:/model.safetensors
   inference:

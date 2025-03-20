@@ -17,9 +17,10 @@ RUN cargo build --release
 
 # Bundle Stage
 FROM gcr.io/distroless/cc
+ARG CPUARCH
 
 COPY --from=builder /app/target/release/train /train
-COPY --from=builder /usr/lib/x86_64-linux-gnu/libz.so* /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/${CPUARCH}-linux-gnu/libz.so* /usr/lib/${CPUARCH}-linux-gnu/
 USER 1000
 CMD ["/train"]
 

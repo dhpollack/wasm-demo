@@ -12,52 +12,24 @@ use futures::StreamExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{
     mpsc::{self, channel},
     oneshot,
 };
-use tokio::time::Duration;
+use tokio::time::{sleep, Duration};
 
-use candle_core::{DType, Device, Result, Tensor};
-use candle_nn::{linear, loss, Linear, Module, Optimizer, VarBuilder, VarMap};
+use candle_core::{DType, Device, Tensor};
+use candle_nn::{loss, Optimizer, VarBuilder, VarMap};
+
+use delivery_model::{
+    data::{Dataset, TrainingItem},
+    model::LinearModel,
+};
 
 const INPUT_DIM: usize = 3;
 const OUTPUT_DIM: usize = 1;
 const LEARNING_RATE: f64 = 0.002;
 const BATCH_SIZE: usize = 100;
-
-#[derive(Serialize, Deserialize)]
-struct TrainingItem {
-    age: f32,
-    dist: f32,
-    rating: f32,
-    delivery_time: f32,
-}
-
-#[derive(Clone)]
-pub struct Dataset {
-    train_data: Tensor,
-    train_labels: Tensor,
-}
-
-struct LinearModel {
-    first: Linear,
-    second: Linear,
-}
-
-impl LinearModel {
-    fn new(input_dim: usize, output_dim: usize, vs: VarBuilder) -> anyhow::Result<Self> {
-        let first = linear(input_dim, 100, vs.pp("ln1"))?;
-        let second = linear(100, output_dim, vs.pp("ln2"))?;
-        Ok(Self { first, second })
-    }
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let x = self.first.forward(x)?;
-        let x = x.relu()?;
-        self.second.forward(&x)
-    }
-}
 
 fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
     let file = File::open("dataset.jsonl")?;
@@ -71,10 +43,10 @@ fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
             item
         })
         .fold((vec![], vec![]), |(mut td, mut tl), item| {
-            td.push(item.age);
-            td.push(item.dist);
-            td.push(item.rating);
-            tl.push(item.delivery_time);
+            td.push(item.req.age);
+            td.push(item.req.dist);
+            td.push(item.req.rating);
+            tl.push(item.resp.delivery_time);
             (td, tl)
         });
     let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), dev)?;
@@ -175,10 +147,10 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
                     items
                         .into_iter()
                         .fold((vec![], vec![]), |(mut td, mut tl), item| {
-                            td.push(item.age);
-                            td.push(item.dist);
-                            td.push(item.rating);
-                            tl.push(item.delivery_time);
+                            td.push(item.req.age);
+                            td.push(item.req.dist);
+                            td.push(item.req.rating);
+                            tl.push(item.resp.delivery_time);
                             (td, tl)
                         });
                 let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), &dev)?;
@@ -200,6 +172,7 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
                 }
             }
         }
+        sleep(Duration::from_millis(300)).await;
     }
 }
 

@@ -5,6 +5,25 @@ volumes:
   redpanda-0: null
   redpanda-1: null
   redpanda-2: null
+#volumes:
+#  redpanda-0:
+#    driver: local
+#    driver_opts:
+#      o: "size=3000m"
+#      device: tmpfs
+#      type: tmpfs
+#  redpanda-1:
+#    driver: local
+#    driver_opts:
+#      o: "size=3000m"
+#      device: tmpfs
+#      type: tmpfs
+#  redpanda-2:
+#    driver: local
+#    driver_opts:
+#      o: "size=3000m"
+#      device: tmpfs
+#      type: tmpfs
 services:
   redpanda-0:
     command:

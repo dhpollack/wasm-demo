@@ -11,6 +11,7 @@ I recommend you do the actual tutorial since it's pretty good and gives you an i
 - [RedPanda CLI (rpk)](https://docs.redpanda.com/current/get-started/rpk/)
 - docker + docker compose
 - CMake (for [rust-rdkafka](https://github.com/fede1024/rust-rdkafka))
+- jq & xh (you can use echo and curl but I like these tools more)
 
 ## Instructions
 
@@ -23,12 +24,15 @@ You may need to use `docker-compose` instead of `docker compose` to run the dock
 ```bash
 # clone repo
 git clone https://github.com/dhpollack/wasm-demo.git
+git checkout wasm-demo-rs
 cd  wasm-demo
 # Start redpanda
 docker-compose up -d
 ```
 
 ### Setup Cluster
+
+First we need to spin up the redpanda cluster
 
 ```bash
 # Setup cluster
@@ -41,6 +45,8 @@ rpk topic create raw-data training-data -p 3
 
 ### Produce some data
 
+Now let's check if the cluster is working...
+
 ```bash
 cd delivery-producer-rs
 cargo run --release
@@ -48,6 +54,8 @@ cd -
 ```
 
 ### Setup Transforms
+
+The original tutorial creates a data transform in tinygo that gets compiled to wasm.  We are going to do the same thing in Rust.
 
 ```bash
 rpk cluster config set data_transforms_enabled true
@@ -60,14 +68,78 @@ cd -
 
 ### Train Model in Real-Time
 
+We are going to produce an infinite stream of random rows from the training data and put them into the redpanda stream.  Then in another terminal we will read from this stream and train our model in an online manner.  This is similar to training a normal neural network except we have an infinite number of epochs, so we will save checkpoints every 10 epochs.
+
 ```bash
 # terminal 1
 cd delivery-producer-rs
 cargo run --release
 # terminal 2
 cd delivery-model-rs
-cargo run --release
+cargo run --release --bin train
 ```
+
+You should keep the above terminals open and running for the next step.
+
+### Classic Inference Server
+
+Next we will do inference with our trained model.  Will see that the model gives the same response as long as we do not reload the model.  Once we reload the model, the response will change.  Feel free to change the request and reload the model as much as you want.
+
+```bash
+# terminal 3
+cd delivery-model-rs
+cargo run --release --bin inference-web
+# terminal 4
+# send request (gives a deterministic response until model is reloaded)
+jq -nc '{"age": 25, "dist": 19.0, "rating": 4.5}' | xh localhost:8000
+# reload model
+xh localhost:8000/reload
+```
+
+You should see something like this:
+
+```bash
+[david@fedora-4 wasm-demo]$ gojq -nc '{"age": 25.4, "dist": 15.5, "rating": 4.1}' | xh localhost:8000
+HTTP/1.1 200 OK
+Content-Length: 27
+Content-Type: application/json
+Date: Thu, 20 Mar 2025 21:34:57 GMT
+Permissions-Policy: interest-cohort=()
+Server: Rocket
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+
+{
+    "delivery_time": 3.5620039
+}
+
+
+[david@fedora-4 wasm-demo]$ xh localhost:8000/reload
+HTTP/1.1 200 OK
+Content-Length: 0
+Date: Thu, 20 Mar 2025 21:35:10 GMT
+Permissions-Policy: interest-cohort=()
+Server: Rocket
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+
+
+[david@fedora-4 wasm-demo]$ gojq -nc '{"age": 25.4, "dist": 15.5, "rating": 4.1}' | xh localhost:8000
+HTTP/1.1 200 OK
+Content-Length: 27
+Content-Type: application/json
+Date: Thu, 20 Mar 2025 21:35:12 GMT
+Permissions-Policy: interest-cohort=()
+Server: Rocket
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+
+{
+    "delivery_time": 22.482447
+}
+```
+
+The exact results will differ depending on how long you trained the model.
 
 # Reference
 

@@ -11,6 +11,8 @@ use rdkafka::message::OwnedHeaders;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use tokio::time::{sleep, Duration as TokioDuration};
 
+const BATCH_SIZE: i32 = 20;
+
 fn load_data() -> anyhow::Result<Vec<String>> {
     println!("Load data...");
     let file = File::open("deliverytime.txt")?;
@@ -31,7 +33,6 @@ async fn main() -> anyhow::Result<()> {
 
     let topic = "raw-data";
     let brokers = "0.0.0.0:19092,0.0.0.0:29092,0.0.0.0:39092";
-    let batch_size = 100;
 
     println!("Create producer...");
     let producer: &FutureProducer = &ClientConfig::new()
@@ -47,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         if rx.try_recv().is_ok() {
             break;
         }
-        let futures = (0..batch_size)
+        let futures = (0..BATCH_SIZE)
             .map(|_| items.choose(&mut rand::rng()).cloned().unwrap())
             .map(|item| async move {
                 // The send operation on the topic returns a future, which will be
@@ -69,12 +70,13 @@ async fn main() -> anyhow::Result<()> {
                 delivery_status
             })
             .collect::<Vec<_>>();
-
+        let mut last_res = Ok((0, 0));
         // This loop will wait until all delivery statuses have been received.
         for fut in futures {
-            let _ = fut.await;
+            last_res = fut.await;
         }
-        println!("Next loop iteraton...");
+        println!("Next loop iteraton: {:?}", last_res);
+        sleep(TokioDuration::from_millis(200)).await;
     }
     println!("Fin!");
     Ok(())

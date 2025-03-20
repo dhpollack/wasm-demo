@@ -1,0 +1,20 @@
+services:
+  producer:
+    network_mode: host
+    build:
+      dockerfile: ../dockerfiles/rdkafka-producer.dockerfile
+      context: delivery-producer-rs
+  train:
+    network_mode: host
+    build:
+      dockerfile: ../dockerfiles/train.dockerfile
+      context: delivery-model-rs
+    volumes:
+      - ./delivery-model-rs/model.safetensors:/model.safetensors
+  inference:
+    network_mode: host
+    build:
+      dockerfile: ../dockerfiles/inference-web.dockerfile
+      context: delivery-model-rs
+    volumes:
+      - ./delivery-model-rs/model.safetensors:/model.safetensors:ro

@@ -141,6 +141,18 @@ X-Frame-Options: SAMEORIGIN
 
 The exact results will differ depending on how long you trained the model.
 
+## Docker Compose Version
+
+First complete the steps until `Setup Transforms`.
+
+Next build and run all the services with docker compose:
+
+```bash
+docker compose -f docker-compose.services.yaml build
+docker compose -f docker-compose.services.yaml up
+```
+
+
 # Reference
 
 - [Original Tutorial on Red Panda Labs](https://docs.redpanda.com/redpanda-labs/?q=getting%20started%20with%20data%20transforms)

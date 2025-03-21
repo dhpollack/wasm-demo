@@ -1,9 +1,9 @@
 
 # Red Panda + Rust - Real Time Data Transforms and Model Training
 
-This is an extension of the [Red Panda Data Transforms tutorial](https://docs.redpanda.com/redpanda-labs/?q=getting%20started%20with%20data%20transforms) in the Red Panda Labs.  It takes the toy example of doing a data transform in golang and model training in python and does everything in rust.  Classic rust rewrite.
+This is an extension of the [Red Panda Data Transforms tutorial](https://docs.redpanda.com/redpanda-labs/?q=getting%20started%20with%20data%20transforms) in the Red Panda Labs.  It takes the toy example of doing a data transform in Golang and modeling in Python and does the exact same thing except in Rust.  Classic rust rewrite.
 
-I recommend you do the actual tutorial since it's pretty good and gives you an idea of what this should do. (note: I had to upgrade the redpanda images to get it to work with the version of rpk in the tutorial image)
+I recommend you do the actual tutorial since it's pretty good and gives you an idea of what this should do. (note: I had to upgrade the redpanda images to get it to work with the version of rpk in the tutorial image).
 
 ## Requirements
 
@@ -23,23 +23,22 @@ You may need to use `docker-compose` instead of `docker compose` to run the dock
 
 ```bash
 # clone repo
-git clone https://github.com/dhpollack/wasm-demo.git
+git clone https://github.com/dhpollack/wasm-demo.git && cd wasm-demo
 git checkout wasm-demo-rs
-cd  wasm-demo
 # Start redpanda
 docker-compose up -d
 ```
 
 ### Setup Cluster
 
-First we need to spin up the redpanda cluster
+First we need to setup up the redpanda cli and cluster.
 
 ```bash
-# Setup cluster
+# Setup your cli
 rpk profile create foodtime-rs
 rpk profile set kafka_api.brokers=localhost:19092
 rpk profile set admin_api.addresses=localhost:19644
-# Create topics
+# Create topics in cluster
 rpk topic create raw-data training-data -p 3
 ```
 
@@ -148,6 +147,8 @@ First complete the steps until `Setup Transforms`.
 Next build and run all the services with docker compose:
 
 ```bash
+# if you are running on a arm-based mac then uncomment the next line
+# export CPUARCH=aarch64
 docker compose -f docker-compose.services.yaml build
 docker compose -f docker-compose.services.yaml up
 ```

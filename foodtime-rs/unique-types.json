@@ -1,0 +1,14 @@
+{
+  "food": [
+    "buffet",
+    "drinks",
+    "meal",
+    "snack"
+  ],
+  "vehicle": [
+    "bicycle",
+    "electric_scooter",
+    "motorcycle",
+    "scooter"
+  ]
+}

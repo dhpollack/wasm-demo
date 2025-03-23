@@ -7,7 +7,7 @@ I recommend you do the actual tutorial since it's pretty good and gives you an i
 
 ## Requirements
 
-- [Rust](https://www.rust-lang.org/)
+- [Rust](https://www.rust-lang.org/) - v1.84.0 or later
 - [RedPanda CLI (rpk)](https://docs.redpanda.com/current/get-started/rpk/)
 - docker + docker compose
 - CMake (for [rust-rdkafka](https://github.com/fede1024/rust-rdkafka))
@@ -17,7 +17,11 @@ I recommend you do the actual tutorial since it's pretty good and gives you an i
 
 ### Before Getting Started
 
-You may need to use `docker-compose` instead of `docker compose` to run the docker commands.
+You may need to use `docker-compose` instead of `docker compose` to run the docker commands. Also, you need to install the `wasm32-wasip1` target.
+
+```bash
+rustup target add wasm32-wasip1
+```
 
 ### Clone Repo and Start Red Panda
 
@@ -60,7 +64,9 @@ The original tutorial creates a data transform in tinygo that gets compiled to w
 rpk cluster config set data_transforms_enabled true
 docker compose down && docker compose up -d
 cd foodtime-rs
-rpk transform build
+# the latest version of Rust renamed the target so we need to build our transform manually
+#rpk transform build
+cargo build --release && cp target/wasm32-wasip1/release/foodtime-rs.wasm .
 rpk transform deploy
 cd -
 ```
@@ -90,7 +96,7 @@ cd delivery-model-rs
 cargo run --release --bin inference-web
 # terminal 4
 # send request (gives a deterministic response until model is reloaded)
-jq -nc '{"age": 25, "dist": 19.0, "rating": 4.5}' | xh localhost:8000
+jq -nc '{"age": 25, "dist": 19.0, "rating": 4.5, "order_type": 1, "vehicle_type": 2}' | xh localhost:8000
 # reload model
 xh localhost:8000/reload
 ```
@@ -98,7 +104,7 @@ xh localhost:8000/reload
 You should see something like this:
 
 ```bash
-[david@fedora-4 wasm-demo]$ gojq -nc '{"age": 25.4, "dist": 15.5, "rating": 4.1}' | xh localhost:8000
+[david@fedora-4 wasm-demo]$ gojq -nc '{"age": 25.4, "dist": 15.5, "rating": 4.1, "order_type": 1, "vehicle_type": 2}' | xh localhost:8000
 HTTP/1.1 200 OK
 Content-Length: 27
 Content-Type: application/json

@@ -16,9 +16,10 @@ services:
     volumes:
       - ./delivery-model-rs/model.safetensors:/model.safetensors
   inference:
-    network_mode: host
     build:
       dockerfile: ../dockerfiles/inference-web.dockerfile
       context: delivery-model-rs
+    ports:
+      - 8000:8000
     volumes:
       - ./delivery-model-rs/model.safetensors:/model.safetensors:ro

@@ -1,0 +1,102 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "delivery-model",
+    "description": "",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/": {
+      "post": {
+        "tags": [],
+        "operationId": "index",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Inference response with estimated delivery time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferenceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reload": {
+      "get": {
+        "tags": [],
+        "operationId": "reload",
+        "responses": {
+          "200": {
+            "description": "Reload model from safetensors file"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "InferenceRequest": {
+        "type": "object",
+        "required": [
+          "age",
+          "dist",
+          "rating",
+          "order_type",
+          "vehicle_type"
+        ],
+        "properties": {
+          "age": {
+            "type": "number",
+            "format": "float"
+          },
+          "dist": {
+            "type": "number",
+            "format": "float"
+          },
+          "order_type": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rating": {
+            "type": "number",
+            "format": "float"
+          },
+          "vehicle_type": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "InferenceResponse": {
+        "type": "object",
+        "required": [
+          "delivery_time"
+        ],
+        "properties": {
+          "delivery_time": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      }
+    }
+  }
+}

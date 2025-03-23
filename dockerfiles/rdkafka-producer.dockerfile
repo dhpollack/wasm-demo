@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.82.0 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1 AS chef
 WORKDIR /app
 
 FROM chef AS planner
@@ -21,7 +21,7 @@ ARG CPUARCH
 
 COPY --from=builder /app/target/release/rdkafka-producer /rdkafka-producer
 COPY --from=builder /usr/lib/${CPUARCH}-linux-gnu/libz.so* /usr/lib/${CPUARCH}-linux-gnu/
-COPY deliverytime.txt /deliverytime.txt
+COPY deliverytime.jsonl /deliverytime.jsonl
 USER 1000
 CMD ["/rdkafka-producer"]
 

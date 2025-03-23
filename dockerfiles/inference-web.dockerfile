@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.82.0 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1 AS chef
 WORKDIR /app
 
 FROM chef AS planner
@@ -17,6 +17,8 @@ RUN cargo build --release
 
 # Bundle Stage
 FROM gcr.io/distroless/cc
+
+ENV ROCKET_ADDRESS=0.0.0.0
 
 COPY --from=builder /app/target/release/inference-web /inference-web
 USER 1000

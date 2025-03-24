@@ -1,2 +1,6 @@
+.git/
+
 debug/
 target/
+
+*.dockerfile

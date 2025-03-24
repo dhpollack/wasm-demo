@@ -10,10 +10,10 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_redoc::{Redoc, Servable};
 
 use delivery_model::data::{InferenceRequest, InferenceResponse};
-use delivery_model::model::LinearModel;
+use delivery_model::model::{CategoricalEmbeddings, LinearModel};
 
 #[derive(OpenApi)]
-#[openapi(paths(index))]
+#[openapi(paths(index, reload))]
 struct InferenceApi;
 
 #[derive(Serialize, ToSchema, Responder, Debug)]
@@ -24,6 +24,7 @@ enum InferenceError {
 
 struct ModelState {
     model: Mutex<LinearModel>,
+    embedding_model: Mutex<CategoricalEmbeddings>,
 }
 
 #[utoipa::path(
@@ -37,9 +38,18 @@ fn index(
     model_state: &State<ModelState>,
     device: &State<Device>,
 ) -> Result<Json<InferenceResponse>, InferenceError> {
-    let input = Tensor::from_vec(vec![item.age, item.dist, item.rating], (1, 3), &device)
+    rocket::debug!("{:?}", item);
+    let features = Tensor::new(vec![vec![item.age, item.dist, item.rating]], device)
+        .map_err(|err| InferenceError::ServerError(format!("{err}")))?;
+    let categories = Tensor::new(vec![vec![item.order_type, item.vehicle_type]], device)
         .map_err(|err| InferenceError::ServerError(format!("{err}")))?;
     let m = model_state.model.lock().unwrap();
+    let emb = model_state.embedding_model.lock().unwrap();
+    let embeddings = emb
+        .forward(&categories)
+        .map_err(|err| InferenceError::ServerError(format!("{err}")))?;
+    let input = Tensor::cat(&[&features, &embeddings], 1)
+        .map_err(|err| InferenceError::ServerError(format!("{err}")))?;
     let res = m
         .forward(&input)
         .map_err(|err| InferenceError::ServerError(format!("{err}")))?;
@@ -59,29 +69,39 @@ fn index(
 #[get("/reload")]
 fn reload(model_state: &State<ModelState>, dev: &State<Device>) {
     let weights =
-        candle_core::safetensors::load("model.safetensors", &dev).expect("could not load tensors");
+        candle_core::safetensors::load("model.safetensors", dev).expect("could not load tensors");
     let mut m = model_state.model.lock().unwrap();
-    m.reload(weights);
+    let mut emb = model_state.embedding_model.lock().unwrap();
+    m.reload(weights.clone());
+    emb.reload(weights);
 }
 
-fn load_model(dev: &Device) -> anyhow::Result<LinearModel> {
-    let weights = candle_core::safetensors::load("model.safetensors", &dev)?;
-    let model = LinearModel::load(weights)?;
-    Ok(model)
+fn load_model(dev: &Device) -> anyhow::Result<(LinearModel, CategoricalEmbeddings)> {
+    let weights = candle_core::safetensors::load("model.safetensors", dev)?;
+    let model = LinearModel::load(weights.clone())?;
+    let embedding_model = CategoricalEmbeddings::load(weights)?;
+    Ok((model, embedding_model))
 }
 
 #[rocket::main]
 async fn main() -> anyhow::Result<()> {
+    // dump openapi file
+    let openapi = InferenceApi::openapi();
+    let _ = std::fs::write("./openapi.json", openapi.to_pretty_json().unwrap());
+
+    // setup model
     let dev = Device::cuda_if_available(0)?;
+    let (model, embedding_model) = load_model(&dev)?;
     let model_state = ModelState {
-        model: Mutex::new(load_model(&dev)?),
+        model: Mutex::new(model),
+        embedding_model: Mutex::new(embedding_model),
     };
 
     rocket::build()
         .manage(model_state)
         .manage(dev)
         .mount("/", routes![index, reload])
-        .mount("/", Redoc::with_url("/redoc", InferenceApi::openapi()))
+        .mount("/", Redoc::with_url("/redoc", openapi))
         .launch()
         .await?;
     Ok(())

@@ -1,4 +1,6 @@
 [build]
-rustflags = ["-Ctarget-feature=+simd128"]
-target = "wasm32-wasi"                    # "wasm32-wasip1"  # NOTE: wasm32-wasi will be deprecated in stable in Jan 2025
+target = "wasm32-wasip1"
 target-dir = "target"
+
+[target.wasm32-wasip1]
+rustflags = ["-Ctarget-feature=+simd128"]

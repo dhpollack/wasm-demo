@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.82.0 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1 AS chef
 WORKDIR /app
 
 FROM chef AS planner
@@ -22,5 +22,5 @@ ARG CPUARCH
 COPY --from=builder /app/target/release/train /train
 COPY --from=builder /usr/lib/${CPUARCH}-linux-gnu/libz.so* /usr/lib/${CPUARCH}-linux-gnu/
 USER 1000
-CMD ["/train"]
+CMD ["/train", "-m", "streaming"]
 

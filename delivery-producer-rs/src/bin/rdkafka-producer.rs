@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, BufRead};
 use std::sync::mpsc::channel;
 use std::time::Duration;
@@ -15,11 +16,10 @@ const BATCH_SIZE: i32 = 20;
 
 fn load_data() -> anyhow::Result<Vec<String>> {
     println!("Load data...");
-    let file = File::open("deliverytime.txt")?;
+    let file = File::open("deliverytime.jsonl")?;
     let reader = io::BufReader::new(file);
     let items: Vec<String> = reader
         .lines()
-        .skip(1)
         .map(|item| item.expect("unable to string record"))
         .collect();
     Ok(items)
@@ -53,13 +53,15 @@ async fn main() -> anyhow::Result<()> {
             .map(|item| async move {
                 // The send operation on the topic returns a future, which will be
                 // completed once the result or failure from Kafka is received.
-                let key = item.split(',').next().unwrap();
+                let mut hasher = DefaultHasher::new();
+                item.hash(&mut hasher);
+                let key = format!("{:x}", hasher.finish());
 
                 let delivery_status = producer
                     .send(
                         FutureRecord::to(topic)
                             .payload(&item)
-                            .key(key)
+                            .key(&key)
                             .headers(OwnedHeaders::new()),
                         Duration::from_secs(0),
                     )

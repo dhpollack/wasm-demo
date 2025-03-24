@@ -8,6 +8,8 @@ extern crate accelerate_src;
 use std::fs::File;
 use std::io::{self, BufRead};
 
+use clap::{Parser, ValueEnum};
+use delivery_model::model::CategoricalEmbeddings;
 use futures::StreamExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -22,19 +24,36 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::{loss, Optimizer, VarBuilder, VarMap};
 
 use delivery_model::{
-    data::{Dataset, TrainingItem},
+    data::{Dataset, TrainData, TrainingItem},
     model::LinearModel,
 };
 
-const INPUT_DIM: usize = 3;
+const INPUT_DIM: usize = 20 + 3;
 const OUTPUT_DIM: usize = 1;
 const LEARNING_RATE: f64 = 0.002;
 const BATCH_SIZE: usize = 100;
 
+/// A program to train a model traditionally or with online with streaming data
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Model training mode
+    #[arg(short, long, value_enum, default_value_t = TrainingMode::Traditional)]
+    mode: TrainingMode,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum TrainingMode {
+    /// Traditional training from a dataset file
+    Traditional,
+    /// Streaming training from a redpanda bus
+    Streaming,
+}
+
 fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
     let file = File::open("dataset.jsonl")?;
     let reader = io::BufReader::new(file);
-    let (data_vec, labels_vec): (Vec<f32>, Vec<f32>) = reader
+    let (data_vec, categorical_vec, labels_vec): (Vec<f32>, Vec<u32>, Vec<f32>) = reader
         .lines()
         .map(|line| {
             let l = line.expect("unable to parse line");
@@ -42,27 +61,42 @@ fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
                 serde_json::from_str(&l).expect("unable to serialize TrainingItem");
             item
         })
-        .fold((vec![], vec![]), |(mut td, mut tl), item| {
-            td.push(item.req.age);
-            td.push(item.req.dist);
-            td.push(item.req.rating);
-            tl.push(item.resp.delivery_time);
-            (td, tl)
-        });
-    let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), dev)?;
-    let labels_tensor = Tensor::from_vec(labels_vec.clone(), labels_vec.len(), dev)?;
+        .fold(
+            (vec![], vec![], vec![]),
+            |(mut td, mut temb, mut tl), item| {
+                // build non-categorical features
+                td.push(item.req.age);
+                td.push(item.req.dist);
+                td.push(item.req.rating);
+                // build categorical features
+                temb.push(item.req.order_type);
+                temb.push(item.req.vehicle_type);
+                // build labels
+                tl.push(item.resp.delivery_time);
+                (td, temb, tl)
+            },
+        );
+    let num_items = labels_vec.len();
+    let data_tensor = Tensor::from_vec(data_vec, (num_items, 3), dev)?;
+    let categorical_tensor = Tensor::from_vec(categorical_vec, (num_items, 2), dev)?;
+    let labels_tensor = Tensor::from_vec(labels_vec, num_items, dev)?;
     Ok(Dataset {
-        train_data: data_tensor,
+        train_data: TrainData {
+            features: data_tensor,
+            categories: categorical_tensor,
+        },
         train_labels: labels_tensor,
     })
 }
 
 fn train_from_local(dev: &Device) -> anyhow::Result<LinearModel> {
     let m = load_data(dev)?;
-    let train_data = m.train_data.to_device(dev)?;
+    let features_data = m.train_data.features.to_device(dev)?;
+    let categorical_data = m.train_data.categories.to_device(dev)?;
     let train_labels = m.train_labels.to_device(dev)?;
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, dev);
+    let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
     let model = LinearModel::new(INPUT_DIM, OUTPUT_DIM, vs.clone())?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
@@ -72,11 +106,12 @@ fn train_from_local(dev: &Device) -> anyhow::Result<LinearModel> {
         },
     )?;
     for _ in 1..200 {
+        let embeddings = embedding_model.forward(&categorical_data)?;
+        let train_data = Tensor::cat(&[&features_data, &embeddings], 1)?;
         let preds = model.forward(&train_data)?.squeeze(1)?;
         let epoch_loss = loss::mse(&preds, &train_labels)?;
+        println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()?);
         opt.backward_step(&epoch_loss)?;
-
-        println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()?)
     }
 
     varmap.save("model.safetensors")?;
@@ -124,6 +159,7 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
     let dev = Device::cuda_if_available(0)?;
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &dev);
+    let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
     let model = LinearModel::new(INPUT_DIM, OUTPUT_DIM, vs.clone())?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
@@ -143,29 +179,32 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
             num_received = receiver.recv_many(&mut items, BATCH_SIZE) => {
                 epoch += 1;
                 println!("num received: {num_received}");
-                let (data_vec, labels_vec): (Vec<f32>, Vec<f32>) =
+                let (data_vec, categorical_vec, labels_vec): (Vec<f32>, Vec<u32>, Vec<f32>) =
                     items
                         .into_iter()
-                        .fold((vec![], vec![]), |(mut td, mut tl), item| {
+                        .fold((vec![], vec![], vec![]), |(mut td, mut temb, mut tl), item| {
+                            // build non-categorical features
                             td.push(item.req.age);
                             td.push(item.req.dist);
                             td.push(item.req.rating);
+                            // build categorical features
+                            temb.push(item.req.order_type);
+                            temb.push(item.req.vehicle_type);
+                            // build labels
                             tl.push(item.resp.delivery_time);
-                            (td, tl)
+                            (td, temb, tl)
                         });
-                let data_tensor = Tensor::from_vec(data_vec.clone(), (data_vec.len() / 3, 3), &dev)?;
-                let labels_tensor = Tensor::from_vec(labels_vec.clone(), labels_vec.len(), &dev)?;
-                let m = Dataset {
-                    train_data: data_tensor,
-                    train_labels: labels_tensor,
-                };
-                let train_data = m.train_data.to_device(&dev)?;
-                let train_labels = m.train_labels.to_device(&dev)?;
+                let num_items = labels_vec.len();
+                let features_tensor = Tensor::from_vec(data_vec, (num_items, 3), &dev)?;
+                let categories_tensor = Tensor::from_vec(categorical_vec, (num_items, 2), &dev)?;
+                let labels_tensor = Tensor::from_vec(labels_vec, num_items, &dev)?;
+                let embeddings = embedding_model.forward(&categories_tensor)?;
+                let train_data = Tensor::cat(&[&features_tensor, &embeddings], 1)?;
                 let preds = model.forward(&train_data)?.squeeze(1)?;
-                let epoch_loss = loss::mse(&preds, &train_labels)?;
+                let epoch_loss = loss::mse(&preds, &labels_tensor)?;
                 opt.backward_step(&epoch_loss)?;
 
-                println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()?);
+                println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()? / num_items as f32);
                 if epoch % 10 == 0 {
                     println!("Saving model after {epoch} epochs");
                     varmap.save("model.safetensors")?;
@@ -179,23 +218,24 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let dev = Device::cuda_if_available(0)?;
-    let from_redpanda = true;
+    let cli = Cli::parse();
 
-    if from_redpanda {
-        // Setup channels
-        let (tx, rx) = channel::<TrainingItem>(BATCH_SIZE);
-        let t1 = tokio::spawn(training_item_stream(tx));
-        let t2 = tokio::spawn(train_from_redpanda(rx));
-        let (_, _) = (t1.await??, t2.await??);
-    } else {
-        match train_from_local(&dev) {
+    match cli.mode {
+        TrainingMode::Streaming => {
+            // Setup channels
+            let (tx, rx) = channel::<TrainingItem>(BATCH_SIZE);
+            let t1 = tokio::spawn(training_item_stream(tx));
+            let t2 = tokio::spawn(train_from_redpanda(rx));
+            let (_, _) = (t1.await??, t2.await??);
+        }
+        TrainingMode::Traditional => match train_from_local(&dev) {
             Ok(_) => {}
             Err(e) => {
                 println!("Error: {}", e);
                 return Err(e);
             }
-        };
-    }
+        },
+    };
 
     Ok(())
 }

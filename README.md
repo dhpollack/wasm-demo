@@ -64,9 +64,7 @@ The original tutorial creates a data transform in tinygo that gets compiled to w
 rpk cluster config set data_transforms_enabled true
 docker compose down && docker compose up -d
 cd foodtime-rs
-# the latest version of Rust renamed the target so we need to build our transform manually
-#rpk transform build
-cargo build --release && cp target/wasm32-wasip1/release/foodtime-rs.wasm .
+rpk transform build
 rpk transform deploy
 cd -
 ```
@@ -159,6 +157,18 @@ docker compose -f docker-compose.services.yaml build
 docker compose -f docker-compose.services.yaml up
 ```
 
+
+## h3 training data
+
+Instead of using the haversine distance, we can also use h3 grid distances.
+
+We can do this by building the transform with the `h3o` library and deploying with transform with the env var flag to enable using this distance calculation. This is a toy example of adding a optional feature using h3 geographical features.
+
+```bash
+# Create topics in cluster
+rpk transform build -- --features h3
+rpk transform deploy --var DIST_CALC_TYPE=h3
+```
 
 # Reference
 

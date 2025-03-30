@@ -5,6 +5,9 @@ use redpanda_transform_sdk::*;
 use serde::{Deserialize, Serialize};
 use serde_repr::Serialize_repr;
 
+#[cfg(feature = "h3")]
+use h3o::{LatLng, Resolution};
+
 #[derive(Clone, Serialize, Deserialize)]
 struct RawRecord {
     id: String,
@@ -38,6 +41,14 @@ enum OrderType {
     Drinks = 2,
     Meal = 3,
     Snack = 4,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+enum DistCalcType {
+    Haversine,
+    #[cfg(feature = "h3")]
+    H3,
 }
 
 impl FromStr for OrderType {
@@ -76,17 +87,29 @@ impl FromStr for VehicleType {
     }
 }
 
+const CALC_VAR: &str = "DIST_CALC_TYPE";
 const R: f32 = 6371.0;
 
 fn main() {
     // Register your transform function.
     // This is a good place to perform other setup too.
-    on_record_written(transform);
+    let dist_calc_type = match std::env::var(CALC_VAR).map_or_else(
+        |_| Ok(DistCalcType::Haversine),
+        |v| serde_json::from_str(&v),
+    ) {
+        Ok(v) => v,
+        _ => DistCalcType::Haversine,
+    };
+    on_record_written(|event, writer| transform(event, writer, dist_calc_type.clone()));
 }
 
 // my_transform is where you read the record that was written, and then you can
 // return new records that will be written to the output topic
-fn transform(event: WriteEvent, writer: &mut RecordWriter) -> Result<(), Box<dyn Error>> {
+fn transform(
+    event: WriteEvent,
+    writer: &mut RecordWriter,
+    dist_calc_type: DistCalcType,
+) -> Result<(), Box<dyn Error>> {
     let rec: RawRecord = match event.record.value() {
         Some(val) if !val.is_empty() => {
             serde_json::from_slice(val).expect("unable to deserialize stream data from redpanda")
@@ -94,7 +117,13 @@ fn transform(event: WriteEvent, writer: &mut RecordWriter) -> Result<(), Box<dyn
         _ => return Ok(()),
     };
 
-    let dist = calc_dist(rec.r_lat, rec.r_lon, rec.d_lat, rec.d_lon);
+    let dist = match dist_calc_type {
+        DistCalcType::Haversine => calc_dist(rec.r_lat, rec.r_lon, rec.d_lat, rec.d_lon),
+        #[cfg(feature = "h3")]
+        DistCalcType::H3 => {
+            calc_dist_h3(rec.r_lat, rec.r_lon, rec.d_lat, rec.d_lon, Resolution::Nine)
+        }
+    };
     // TODO: do this automatically in serialization
     let order_type = OrderType::from_str(rec.order_type.as_str()).expect("order type found");
     let vehicle_type = VehicleType::from_str(rec.vehicle_type.as_str()).expect("order type found");
@@ -129,6 +158,18 @@ fn calc_dist(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
         + (deg_to_rad(lat1)).cos() * (deg_to_rad(lat2)).cos() * (d_lon / 2.0).sin().powi(2);
     let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
     R * c
+}
+
+#[cfg(feature = "h3")]
+fn calc_dist_h3(lat1: f32, lon1: f32, lat2: f32, lon2: f32, res: Resolution) -> f32 {
+    let r_latlon = LatLng::new(lat1 as f64, lon1 as f64).expect("invalid lat-long");
+    let d_latlon = LatLng::new(lat2 as f64, lon2 as f64).expect("invalid lat-long");
+    let r_cell = r_latlon.to_cell(res);
+    let d_cell = d_latlon.to_cell(res);
+    let dist = r_cell
+        .grid_distance(d_cell)
+        .expect("unable to get grid distance");
+    dist as f32
 }
 
 #[cfg(test)]

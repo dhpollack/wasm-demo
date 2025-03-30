@@ -2,3 +2,5 @@ name: foodtime-rs
 input-topic: "raw-data"
 output-topics: ["training-data"]
 language: rust
+env:
+  DIST_CALC_TYPE: haversine

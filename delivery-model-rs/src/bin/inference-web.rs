@@ -11,6 +11,7 @@ use utoipa_redoc::{Redoc, Servable};
 
 use delivery_model::data::{InferenceRequest, InferenceResponse};
 use delivery_model::model::{CategoricalEmbeddings, LinearModel};
+use delivery_model::settings::Settings;
 
 #[derive(OpenApi)]
 #[openapi(paths(index, reload))]
@@ -67,17 +68,20 @@ fn index(
     responses((status = 200, description = "Reload model from safetensors file"))
 )]
 #[get("/reload")]
-fn reload(model_state: &State<ModelState>, dev: &State<Device>) {
-    let weights =
-        candle_core::safetensors::load("model.safetensors", dev).expect("could not load tensors");
+fn reload(model_state: &State<ModelState>, dev: &State<Device>, settings: &State<Settings>) {
+    let weights = candle_core::safetensors::load(settings.common.weights_path.as_str(), dev)
+        .expect("could not load tensors");
     let mut m = model_state.model.lock().unwrap();
     let mut emb = model_state.embedding_model.lock().unwrap();
     m.reload(weights.clone());
     emb.reload(weights);
 }
 
-fn load_model(dev: &Device) -> anyhow::Result<(LinearModel, CategoricalEmbeddings)> {
-    let weights = candle_core::safetensors::load("model.safetensors", dev)?;
+fn load_model(
+    weights_path: &str,
+    dev: &Device,
+) -> anyhow::Result<(LinearModel, CategoricalEmbeddings)> {
+    let weights = candle_core::safetensors::load(weights_path, dev)?;
     let model = LinearModel::load(weights.clone())?;
     let embedding_model = CategoricalEmbeddings::load(weights)?;
     Ok((model, embedding_model))
@@ -85,13 +89,15 @@ fn load_model(dev: &Device) -> anyhow::Result<(LinearModel, CategoricalEmbedding
 
 #[rocket::main]
 async fn main() -> anyhow::Result<()> {
+    // Get settings
+    let settings = Settings::new()?;
     // dump openapi file
     let openapi = InferenceApi::openapi();
     let _ = std::fs::write("./openapi.json", openapi.to_pretty_json().unwrap());
 
     // setup model
     let dev = Device::cuda_if_available(0)?;
-    let (model, embedding_model) = load_model(&dev)?;
+    let (model, embedding_model) = load_model(&settings.common.weights_path, &dev)?;
     let model_state = ModelState {
         model: Mutex::new(model),
         embedding_model: Mutex::new(embedding_model),
@@ -100,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
     rocket::build()
         .manage(model_state)
         .manage(dev)
+        .manage(settings)
         .mount("/", routes![index, reload])
         .mount("/", Redoc::with_url("/redoc", openapi))
         .launch()

@@ -5,5 +5,5 @@
 Get unique vehicle and food types
 
 ```bash
-gojq -sR '. | [split("\n")[] | split(",") | {"food": (.[-3] | trim | ascii_downcase), "vehicle": (.[-2] | trim | ascii_downcase)}][1:] | reduce .[] as {$food, $vehicle} (null; .food += [$food] | .vehicle += [$vehicle]) |.food = (.food | unique) | .vehicle = (.vehicle | unique)' deliverytime.txt
+gojq -s 'reduce .[] as {$order_type, $vehicle_type} (null; .order_type += [$order_type] | .vehicle_type += [$vehicle_type]) | .order_type = (.order_type | unique) | .vehicle_type = (.vehicle_type | unique) ' deliverytime.jsonl
 ```

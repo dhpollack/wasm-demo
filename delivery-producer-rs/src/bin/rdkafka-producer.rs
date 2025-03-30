@@ -7,16 +7,24 @@ use std::time::Duration;
 use log::debug;
 use rand::prelude::IndexedRandom;
 
+use config::Config;
 use rdkafka::config::ClientConfig;
 use rdkafka::message::OwnedHeaders;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use tokio::time::{sleep, Duration as TokioDuration};
 
-const BATCH_SIZE: i32 = 20;
+#[derive(Debug, Default, serde_derive::Deserialize, PartialEq, Eq)]
+struct AppConfig {
+    topic: String,
+    brokers: String,
+    batch_size: i32,
+    loop_sleep: u64,
+    data_file: String,
+}
 
-fn load_data() -> anyhow::Result<Vec<String>> {
+fn load_data(data_file: &str) -> anyhow::Result<Vec<String>> {
     println!("Load data...");
-    let file = File::open("deliverytime.jsonl")?;
+    let file = File::open(data_file)?;
     let reader = io::BufReader::new(file);
     let items: Vec<String> = reader
         .lines()
@@ -27,20 +35,27 @@ fn load_data() -> anyhow::Result<Vec<String>> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let config: AppConfig = Config::builder()
+        .add_source(config::File::with_name("config/default"))
+        .add_source(config::Environment::with_prefix("PRODUCER"))
+        .build()?
+        .try_deserialize()?;
+
     let (tx, rx) = channel();
     ctrlc::set_handler(move || tx.send(()).expect("Could not send signal on channel."))
         .expect("Error setting Ctrl-C handler");
 
-    let topic = "raw-data";
-    let brokers = "0.0.0.0:19092,0.0.0.0:29092,0.0.0.0:39092";
+    let topic = config.topic.as_str();
+    let batch_size = config.batch_size;
+    let loop_sleep = config.loop_sleep;
 
     println!("Create producer...");
     let producer: &FutureProducer = &ClientConfig::new()
-        .set("bootstrap.servers", brokers)
+        .set("bootstrap.servers", &config.brokers)
         .set("message.timeout.ms", "5000")
         .create()
         .expect("Producer creation error");
-    let items = load_data()?;
+    let items = load_data(config.data_file.as_str())?;
     // This loop is non blocking: all messages will be sent one after the other, without waiting
     // for the results.
     println!("Begin loop...");
@@ -48,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         if rx.try_recv().is_ok() {
             break;
         }
-        let futures = (0..BATCH_SIZE)
+        let futures = (0..batch_size)
             .map(|_| items.choose(&mut rand::rng()).cloned().unwrap())
             .map(|item| async move {
                 // The send operation on the topic returns a future, which will be
@@ -78,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
             last_res = fut.await;
         }
         println!("Next loop iteraton: {:?}", last_res);
-        sleep(TokioDuration::from_millis(200)).await;
+        sleep(TokioDuration::from_millis(loop_sleep)).await;
     }
     println!("Fin!");
     Ok(())

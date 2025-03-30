@@ -26,12 +26,8 @@ use candle_nn::{loss, Optimizer, VarBuilder, VarMap};
 use delivery_model::{
     data::{Dataset, TrainData, TrainingItem},
     model::LinearModel,
+    settings::Settings,
 };
-
-const INPUT_DIM: usize = 20 + 3;
-const OUTPUT_DIM: usize = 1;
-const LEARNING_RATE: f64 = 0.002;
-const BATCH_SIZE: usize = 100;
 
 /// A program to train a model traditionally or with online with streaming data
 #[derive(Parser, Debug)]
@@ -89,7 +85,13 @@ fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
     })
 }
 
-fn train_from_local(dev: &Device) -> anyhow::Result<LinearModel> {
+fn train_from_local(
+    input_dim: usize,
+    output_dim: usize,
+    learning_rate: f64,
+    weights_path: &str,
+    dev: &Device,
+) -> anyhow::Result<LinearModel> {
     let m = load_data(dev)?;
     let features_data = m.train_data.features.to_device(dev)?;
     let categorical_data = m.train_data.categories.to_device(dev)?;
@@ -97,11 +99,11 @@ fn train_from_local(dev: &Device) -> anyhow::Result<LinearModel> {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, dev);
     let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
-    let model = LinearModel::new(INPUT_DIM, OUTPUT_DIM, vs.clone())?;
+    let model = LinearModel::new(input_dim, output_dim, vs.clone())?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
         candle_nn::ParamsAdamW {
-            lr: LEARNING_RATE,
+            lr: learning_rate,
             ..Default::default()
         },
     )?;
@@ -114,7 +116,7 @@ fn train_from_local(dev: &Device) -> anyhow::Result<LinearModel> {
         opt.backward_step(&epoch_loss)?;
     }
 
-    varmap.save("model.safetensors")?;
+    varmap.save(weights_path)?;
 
     Ok(model)
 }
@@ -132,10 +134,12 @@ async fn create_consumer<'a>(topic: &'a str, brokers: &'a str) -> anyhow::Result
     Ok(consumer)
 }
 
-async fn training_item_stream(sender: mpsc::Sender<TrainingItem>) -> anyhow::Result<()> {
+async fn training_item_stream(
+    topic: &str,
+    brokers: &str,
+    sender: mpsc::Sender<TrainingItem>,
+) -> anyhow::Result<()> {
     // Setup kafka consumer and put stream messages into channel
-    let topic = "training-data";
-    let brokers = "0.0.0.0:19092,0.0.0.0:29092,0.0.0.0:39092";
     let consumer = create_consumer(topic, brokers).await?;
     let mut stream = consumer.stream();
     while let Some(Ok(borrowed_message)) = stream.next().await {
@@ -152,7 +156,14 @@ async fn training_item_stream(sender: mpsc::Sender<TrainingItem>) -> anyhow::Res
     Ok(())
 }
 
-async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyhow::Result<()> {
+async fn train_from_redpanda(
+    input_dim: usize,
+    output_dim: usize,
+    learning_rate: f64,
+    batch_size: usize,
+    weights_path: &str,
+    mut receiver: mpsc::Receiver<TrainingItem>,
+) -> anyhow::Result<()> {
     // Setup dummy receivers
     let (_tx, mut rx) = oneshot::channel::<()>();
     // Setup model
@@ -160,11 +171,11 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &dev);
     let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
-    let model = LinearModel::new(INPUT_DIM, OUTPUT_DIM, vs.clone())?;
+    let model = LinearModel::new(input_dim, output_dim, vs.clone())?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
         candle_nn::ParamsAdamW {
-            lr: LEARNING_RATE,
+            lr: learning_rate,
             ..Default::default()
         },
     )?;
@@ -176,7 +187,7 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
                 println!("STOP RECEIVING");
                 return Ok(());
             }
-            num_received = receiver.recv_many(&mut items, BATCH_SIZE) => {
+            num_received = receiver.recv_many(&mut items, batch_size) => {
                 epoch += 1;
                 println!("num received: {num_received}");
                 let (data_vec, categorical_vec, labels_vec): (Vec<f32>, Vec<u32>, Vec<f32>) =
@@ -207,7 +218,7 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
                 println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()? / num_items as f32);
                 if epoch % 10 == 0 {
                     println!("Saving model after {epoch} epochs");
-                    varmap.save("model.safetensors")?;
+                    varmap.save(weights_path)?;
                 }
             }
         }
@@ -217,18 +228,42 @@ async fn train_from_redpanda(mut receiver: mpsc::Receiver<TrainingItem>) -> anyh
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let settings = Settings::new()?;
     let dev = Device::cuda_if_available(0)?;
     let cli = Cli::parse();
 
     match cli.mode {
         TrainingMode::Streaming => {
             // Setup channels
-            let (tx, rx) = channel::<TrainingItem>(BATCH_SIZE);
-            let t1 = tokio::spawn(training_item_stream(tx));
-            let t2 = tokio::spawn(train_from_redpanda(rx));
+            let (tx, rx) = channel::<TrainingItem>(settings.train.batch_size);
+            let t1 = tokio::spawn(async move {
+                training_item_stream(
+                    &settings.train.streaming.topic,
+                    &settings.train.streaming.brokers,
+                    tx,
+                )
+                .await
+            });
+            let t2 = tokio::spawn(async move {
+                train_from_redpanda(
+                    settings.train.input_dim,
+                    settings.train.output_dim,
+                    settings.train.learning_rate,
+                    settings.train.batch_size,
+                    &settings.common.weights_path,
+                    rx,
+                )
+                .await
+            });
             let (_, _) = (t1.await??, t2.await??);
         }
-        TrainingMode::Traditional => match train_from_local(&dev) {
+        TrainingMode::Traditional => match train_from_local(
+            settings.train.input_dim,
+            settings.train.output_dim,
+            settings.train.learning_rate,
+            &settings.common.weights_path,
+            &dev,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 println!("Error: {}", e);

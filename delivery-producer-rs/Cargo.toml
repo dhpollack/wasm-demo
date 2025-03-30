@@ -12,3 +12,6 @@ rdkafka = { version = "0.37", features = ["cmake-build"] }
 tokio = { version = "1.44.1", features = ["full"] }
 tokio-stream = "0.1.17"
 log = "0.4.26"
+config = "0.15.11"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_derive = "1.0.219"

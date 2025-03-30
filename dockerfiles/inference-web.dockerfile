@@ -21,5 +21,6 @@ FROM gcr.io/distroless/cc
 ENV ROCKET_ADDRESS=0.0.0.0
 
 COPY --from=builder /app/target/release/inference-web /inference-web
+COPY config /config
 USER 1000
 CMD ["/inference-web"]

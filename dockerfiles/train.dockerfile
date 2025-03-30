@@ -21,6 +21,7 @@ ARG CPUARCH
 
 COPY --from=builder /app/target/release/train /train
 COPY --from=builder /usr/lib/${CPUARCH}-linux-gnu/libz.so* /usr/lib/${CPUARCH}-linux-gnu/
+COPY config /config
 USER 1000
 CMD ["/train", "-m", "streaming"]
 

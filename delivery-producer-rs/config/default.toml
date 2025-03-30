@@ -1,0 +1,5 @@
+topic = "raw-data"
+brokers = "0.0.0.0:19092,0.0.0.0:29092,0.0.0.0:39092"
+batch_size = 32
+loop_sleep = 200
+data_file = "deliverytime.jsonl"

@@ -22,6 +22,7 @@ ARG CPUARCH
 COPY --from=builder /app/target/release/rdkafka-producer /rdkafka-producer
 COPY --from=builder /usr/lib/${CPUARCH}-linux-gnu/libz.so* /usr/lib/${CPUARCH}-linux-gnu/
 COPY deliverytime.jsonl /deliverytime.jsonl
+COPY config /config
 USER 1000
 CMD ["/rdkafka-producer"]
 

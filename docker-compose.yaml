@@ -50,11 +50,12 @@ services:
       # Mode dev-container uses well-known configuration properties for development in containers.
       - --mode dev-container
       # enable logs for debugging.
-      - --default-log-level=debug
-    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
+      - --default-log-level=info
+    image: &redpanda-image docker.redpanda.com/redpandadata/redpanda:v24.3.7
     container_name: redpanda-0
     volumes:
       - redpanda-0:/var/lib/redpanda/data
+      - ./redpanda/config.yaml:/etc/redpanda/.bootstrap.yaml
     networks:
       - redpanda_network
     ports:
@@ -62,6 +63,11 @@ services:
       - 18082:18082
       - 19092:19092
       - 19644:9644
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   redpanda-1:
     command:
       - redpanda
@@ -76,12 +82,13 @@ services:
       - --smp 1
       - --memory 1G
       - --mode dev-container
-      - --default-log-level=debug
+      - --default-log-level=info
       - --seeds redpanda-0:33145
-    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
+    image: *redpanda-image
     container_name: redpanda-1
     volumes:
       - redpanda-1:/var/lib/redpanda/data
+      - ./redpanda/config.yaml:/etc/redpanda/.bootstrap.yaml
     networks:
       - redpanda_network
     ports:
@@ -105,12 +112,13 @@ services:
       - --smp 1
       - --memory 1G
       - --mode dev-container
-      - --default-log-level=debug
+      - --default-log-level=info
       - --seeds redpanda-0:33145
-    image: docker.redpanda.com/redpandadata/redpanda:v24.3.7
+    image: *redpanda-image
     container_name: redpanda-2
     volumes:
       - redpanda-2:/var/lib/redpanda/data
+      - ./redpanda/config.yaml:/etc/redpanda/.bootstrap.yaml
     networks:
       - redpanda_network
     ports:
@@ -134,7 +142,7 @@ services:
           brokers: ["redpanda-0:9092"]
           schemaRegistry:
             enabled: true
-            urls: ["http://redpanda-0:8081"]
+            urls: ["http://redpanda-0:8081","http://redpanda-1:8081","http://redpanda-2:8081"]
         redpanda:
           adminApi:
             enabled: true
@@ -142,4 +150,21 @@ services:
     ports:
       - 8080:8080
     depends_on:
-      - redpanda-0
+      redpanda-0:
+        condition: service_healthy
+  create-topics:
+    image: *redpanda-image
+    networks:
+      - redpanda_network
+    command:
+      - topic
+      - create
+      - raw-data
+      - training-data
+      - -p
+      - "3"
+      - -X
+      - brokers=redpanda-0:9092
+    depends_on:
+      redpanda-0:
+        condition: service_healthy

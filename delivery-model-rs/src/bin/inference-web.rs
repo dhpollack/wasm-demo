@@ -3,7 +3,8 @@ extern crate rocket;
 
 use std::sync::Mutex;
 
-use candle_core::{Device, Tensor};
+use candle_core::{DType, Device, Tensor};
+use candle_nn::{VarBuilder, VarMap};
 use rocket::{serde::json::Json, State};
 use serde::Serialize;
 use utoipa::{OpenApi, ToSchema};
@@ -78,12 +79,31 @@ fn reload(model_state: &State<ModelState>, dev: &State<Device>, settings: &State
 }
 
 fn load_model(
-    weights_path: &str,
+    settings: &Settings,
     dev: &Device,
 ) -> anyhow::Result<(LinearModel, CategoricalEmbeddings)> {
-    let weights = candle_core::safetensors::load(weights_path, dev)?;
-    let model = LinearModel::load(weights.clone())?;
-    let embedding_model = CategoricalEmbeddings::load(weights)?;
+    let (model, embedding_model) =
+        match candle_core::safetensors::load(&settings.common.weights_path, dev) {
+            Ok(weights) => (
+                LinearModel::load(weights.clone())?,
+                CategoricalEmbeddings::load(weights)?,
+            ),
+            Err(_) => {
+                let varmap = VarMap::new();
+                let vs = VarBuilder::from_varmap(&varmap, DType::F32, &dev);
+                let model = LinearModel::new(
+                    settings.train.input_dim,
+                    settings.train.output_dim,
+                    vs.clone(),
+                )?;
+                let embedding_model = CategoricalEmbeddings::new(
+                    settings.train.num_order_types,
+                    settings.train.num_vehicle_types,
+                    vs.clone(),
+                )?;
+                (model, embedding_model)
+            }
+        };
     Ok((model, embedding_model))
 }
 
@@ -97,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
 
     // setup model
     let dev = Device::cuda_if_available(0)?;
-    let (model, embedding_model) = load_model(&settings.common.weights_path, &dev)?;
+    let (model, embedding_model) = load_model(&settings, &dev)?;
     let model_state = ModelState {
         model: Mutex::new(model),
         embedding_model: Mutex::new(embedding_model),

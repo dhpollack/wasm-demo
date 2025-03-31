@@ -12,6 +12,8 @@ pub struct CommonSettings {
 pub struct TrainSettings {
     pub input_dim: usize,
     pub output_dim: usize,
+    pub num_order_types: usize,
+    pub num_vehicle_types: usize,
     pub learning_rate: f64,
     pub batch_size: usize,
     pub streaming: StreamingTrainSettings,

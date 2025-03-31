@@ -19,6 +19,7 @@ RUN cargo build --release
 FROM gcr.io/distroless/cc
 
 ENV ROCKET_ADDRESS=0.0.0.0
+ENV ROCKET_LOG_LEVEL=normal
 
 COPY --from=builder /app/target/release/inference-web /inference-web
 COPY config /config

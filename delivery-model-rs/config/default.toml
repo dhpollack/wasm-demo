@@ -4,6 +4,8 @@ weights_path = "model.safetensors"
 [train]
 input_dim = 23
 output_dim = 1
+num_order_types = 5
+num_vehicle_types = 5
 learning_rate = 0.002
 batch_size = 100
 

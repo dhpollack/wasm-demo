@@ -85,25 +85,27 @@ fn load_data(dev: &Device) -> anyhow::Result<Dataset> {
     })
 }
 
-fn train_from_local(
-    input_dim: usize,
-    output_dim: usize,
-    learning_rate: f64,
-    weights_path: &str,
-    dev: &Device,
-) -> anyhow::Result<LinearModel> {
+fn train_from_local(settings: &Settings, dev: &Device) -> anyhow::Result<LinearModel> {
     let m = load_data(dev)?;
     let features_data = m.train_data.features.to_device(dev)?;
     let categorical_data = m.train_data.categories.to_device(dev)?;
     let train_labels = m.train_labels.to_device(dev)?;
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, dev);
-    let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
-    let model = LinearModel::new(input_dim, output_dim, vs.clone())?;
+    let embedding_model = CategoricalEmbeddings::new(
+        settings.train.num_order_types,
+        settings.train.num_vehicle_types,
+        vs.clone(),
+    )?;
+    let model = LinearModel::new(
+        settings.train.input_dim,
+        settings.train.output_dim,
+        vs.clone(),
+    )?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
         candle_nn::ParamsAdamW {
-            lr: learning_rate,
+            lr: settings.train.learning_rate,
             ..Default::default()
         },
     )?;
@@ -116,7 +118,7 @@ fn train_from_local(
         opt.backward_step(&epoch_loss)?;
     }
 
-    varmap.save(weights_path)?;
+    varmap.save(&settings.common.weights_path)?;
 
     Ok(model)
 }
@@ -157,11 +159,7 @@ async fn training_item_stream(
 }
 
 async fn train_from_redpanda(
-    input_dim: usize,
-    output_dim: usize,
-    learning_rate: f64,
-    batch_size: usize,
-    weights_path: &str,
+    settings: &Settings,
     mut receiver: mpsc::Receiver<TrainingItem>,
 ) -> anyhow::Result<()> {
     // Setup dummy receivers
@@ -170,12 +168,20 @@ async fn train_from_redpanda(
     let dev = Device::cuda_if_available(0)?;
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F32, &dev);
-    let embedding_model = CategoricalEmbeddings::new(5, 5, vs.clone())?;
-    let model = LinearModel::new(input_dim, output_dim, vs.clone())?;
+    let embedding_model = CategoricalEmbeddings::new(
+        settings.train.num_order_types,
+        settings.train.num_vehicle_types,
+        vs.clone(),
+    )?;
+    let model = LinearModel::new(
+        settings.train.input_dim,
+        settings.train.output_dim,
+        vs.clone(),
+    )?;
     let mut opt = candle_nn::AdamW::new(
         varmap.all_vars(),
         candle_nn::ParamsAdamW {
-            lr: learning_rate,
+            lr: settings.train.learning_rate,
             ..Default::default()
         },
     )?;
@@ -187,7 +193,7 @@ async fn train_from_redpanda(
                 println!("STOP RECEIVING");
                 return Ok(());
             }
-            num_received = receiver.recv_many(&mut items, batch_size) => {
+            num_received = receiver.recv_many(&mut items, settings.train.batch_size) => {
                 epoch += 1;
                 println!("num received: {num_received}");
                 let (data_vec, categorical_vec, labels_vec): (Vec<f32>, Vec<u32>, Vec<f32>) =
@@ -218,7 +224,7 @@ async fn train_from_redpanda(
                 println!("Train Loss: {:8.5}", epoch_loss.to_scalar::<f32>()? / num_items as f32);
                 if epoch % 10 == 0 {
                     println!("Saving model after {epoch} epochs");
-                    varmap.save(weights_path)?;
+                    varmap.save(&settings.common.weights_path)?;
                 }
             }
         }
@@ -235,35 +241,14 @@ async fn main() -> anyhow::Result<()> {
     match cli.mode {
         TrainingMode::Streaming => {
             // Setup channels
+            let topic = settings.train.streaming.topic.clone();
+            let brokers = settings.train.streaming.brokers.clone();
             let (tx, rx) = channel::<TrainingItem>(settings.train.batch_size);
-            let t1 = tokio::spawn(async move {
-                training_item_stream(
-                    &settings.train.streaming.topic,
-                    &settings.train.streaming.brokers,
-                    tx,
-                )
-                .await
-            });
-            let t2 = tokio::spawn(async move {
-                train_from_redpanda(
-                    settings.train.input_dim,
-                    settings.train.output_dim,
-                    settings.train.learning_rate,
-                    settings.train.batch_size,
-                    &settings.common.weights_path,
-                    rx,
-                )
-                .await
-            });
+            let t1 = tokio::spawn(async move { training_item_stream(&topic, &brokers, tx).await });
+            let t2 = tokio::spawn(async move { train_from_redpanda(&settings, rx).await });
             let (_, _) = (t1.await??, t2.await??);
         }
-        TrainingMode::Traditional => match train_from_local(
-            settings.train.input_dim,
-            settings.train.output_dim,
-            settings.train.learning_rate,
-            &settings.common.weights_path,
-            &dev,
-        ) {
+        TrainingMode::Traditional => match train_from_local(&settings, &dev) {
             Ok(_) => {}
             Err(e) => {
                 println!("Error: {}", e);

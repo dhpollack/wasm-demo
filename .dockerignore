@@ -4,3 +4,7 @@ debug/
 target/
 
 *.dockerfile
+
+**/.venv
+**/build
+**/.ipynb_checkpoints

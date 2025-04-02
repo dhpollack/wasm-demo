@@ -1,3 +1,7 @@
+# Original Instructions
+
+These are the original instructions.  They won't work anymore, but I have kept them here for notes in case someone wants to try to use the original repo.
+
 # Getting Started
 
 ## Download and Start Workspace

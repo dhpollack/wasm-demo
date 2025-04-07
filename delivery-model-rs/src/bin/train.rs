@@ -190,6 +190,7 @@ async fn train_from_redpanda(
         let mut items: Vec<TrainingItem> = vec![];
         tokio::select! {
             _ = tokio::time::timeout(Duration::from_secs(10), &mut rx) => {
+                println!("Make sure you deployed the data transform if training is not receiving anything.");
                 println!("STOP RECEIVING");
                 return Ok(());
             }
